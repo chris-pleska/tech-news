@@ -2,9 +2,9 @@ import feedparser
 import requests
 import html
 import re
-from datetime import datetime, timezone   # NEW: for building clean dates
+from datetime import datetime, timezone
+import db                                   # NEW: your own db.py file
 
-# Each feed: a name, a category, and its URL.
 FEEDS = [
     {"name": "GameSpot", "category": "games", "url": "https://www.gamespot.com/feeds/game-news/"},
     {"name": "Tom's Hardware", "category": "pc components", "url": "https://www.tomshardware.com/feeds.xml"},
@@ -16,40 +16,43 @@ HEADERS = {
 
 
 def clean_summary(text, max_length=300):
-    if not text:                          # missing or empty summary: nothing to clean
+    if not text:
         return None
 
-    text = re.sub(r"<[^>]+>", " ", text)  # remove HTML tags like <p> or <img ...>
-    text = html.unescape(text)            # turn codes like &amp; back into &
-    text = " ".join(text.split())         # squash extra spaces and newlines into single spaces
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = " ".join(text.split())
 
-    if len(text) <= max_length:           # already short enough: done
+    if len(text) <= max_length:
         return text
 
-    cut = text[:max_length]               # take the first 300 characters
-    cut = cut.rsplit(" ", 1)[0]           # back up to the last full word
+    cut = text[:max_length]
+    cut = cut.rsplit(" ", 1)[0]
     return cut + "..."
 
 
-def clean_date(entry):                                    # NEW
-    parsed = entry.get("published_parsed")                # the date already split into pieces, in UTC
-    if not parsed:                                        # some entries have no date at all
+def clean_date(entry):
+    parsed = entry.get("published_parsed")
+    if not parsed:
         return None
 
-    date = datetime(*parsed[:6], tzinfo=timezone.utc)     # year, month, day, hour, minute, second
-    return date.isoformat()                               # e.g. "2026-10-01T15:38:13+00:00"
+    date = datetime(*parsed[:6], tzinfo=timezone.utc)
+    return date.isoformat()
 
 
-for feed_info in FEEDS:                          # repeat everything below once per feed
-    print("---", feed_info["name"], "---")       # show which feed we're on
+db.create_table()                                        # NEW: make sure the table exists
+conn = db.get_connection()                               # NEW: open the database once for the whole run
+grabbed_at = datetime.now(timezone.utc).isoformat()      # NEW: the time of this run, same for every item
 
-    try:                                         # attempt this feed...
+for feed_info in FEEDS:
+    try:
         response = requests.get(feed_info["url"], timeout=10, headers=HEADERS)
-        response.raise_for_status()              # turn a failed download into an error
+        response.raise_for_status()
 
         feed = feedparser.parse(response.content)
+        new_count = 0                                    # NEW: count new items for this feed
 
-        for entry in feed.entries[:3]:
+        for entry in feed.entries:                       # CHANGED: no more [:3], save everything
             item = {
                 "source": feed_info["name"],
                 "category": feed_info["category"],
@@ -57,9 +60,15 @@ for feed_info in FEEDS:                          # repeat everything below once 
                 "link": entry.get("link"),
                 "summary": clean_summary(entry.get("summary")),
                 "published_at": clean_date(entry),
+                "grabbed_at": grabbed_at,                # NEW
             }
-            print(item)
+            if db.save_item(conn, item):                 # CHANGED: save instead of print
+                new_count += 1                           # add 1 if it was new
 
-    except Exception as error:                   # ...and if anything above failed:
-        print("Failed:", feed_info["name"], "-", error)   # say so, then the loop continues
-        
+        conn.commit()                                    # NEW: save this feed's items to the file
+        print(feed_info["name"], ":", new_count, "new")  # CHANGED: one summary line per feed
+
+    except Exception as error:
+        print("Failed:", feed_info["name"], "-", error)
+
+conn.close()                                             # NEW: close the database at the end
