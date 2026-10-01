@@ -40,35 +40,44 @@ def clean_date(entry):
     return date.isoformat()
 
 
-db.create_table()                                        # NEW: make sure the table exists
-conn = db.get_connection()                               # NEW: open the database once for the whole run
-grabbed_at = datetime.now(timezone.utc).isoformat()      # NEW: the time of this run, same for every item
+def fetch_and_store():
+    db.create_table()                                        # make sure the table exists
+    conn = db.get_connection()                               # open the database once for the whole run
+    grabbed_at = datetime.now(timezone.utc).isoformat()      # the time of this run
+    new_items = []                                           # NEW: collects every new item across all feeds
 
-for feed_info in FEEDS:
-    try:
-        response = requests.get(feed_info["url"], timeout=10, headers=HEADERS)
-        response.raise_for_status()
+    for feed_info in FEEDS:
+        try:
+            response = requests.get(feed_info["url"], timeout=10, headers=HEADERS)
+            response.raise_for_status()
 
-        feed = feedparser.parse(response.content)
-        new_count = 0                                    # NEW: count new items for this feed
+            feed = feedparser.parse(response.content)
+            new_count = 0
 
-        for entry in feed.entries:                       # CHANGED: no more [:3], save everything
-            item = {
-                "source": feed_info["name"],
-                "category": feed_info["category"],
-                "title": entry.get("title"),
-                "link": entry.get("link"),
-                "summary": clean_summary(entry.get("summary")),
-                "published_at": clean_date(entry),
-                "grabbed_at": grabbed_at,                # NEW
-            }
-            if db.save_item(conn, item):                 # CHANGED: save instead of print
-                new_count += 1                           # add 1 if it was new
+            for entry in feed.entries:
+                item = {
+                    "source": feed_info["name"],
+                    "category": feed_info["category"],
+                    "title": entry.get("title"),
+                    "link": entry.get("link"),
+                    "summary": clean_summary(entry.get("summary")),
+                    "published_at": clean_date(entry),
+                    "grabbed_at": grabbed_at,
+                }
+                if db.save_item(conn, item):
+                    new_count += 1
+                    new_items.append(item)                   # NEW: remember it for whoever called us
 
-        conn.commit()                                    # NEW: save this feed's items to the file
-        print(feed_info["name"], ":", new_count, "new")  # CHANGED: one summary line per feed
+            conn.commit()
+            print(feed_info["name"], ":", new_count, "new")
 
-    except Exception as error:
-        print("Failed:", feed_info["name"], "-", error)
+        except Exception as error:
+            print("Failed:", feed_info["name"], "-", error)
 
-conn.close()                                             # NEW: close the database at the end
+    conn.close()
+    return new_items                                         # NEW: hand the new items back to the caller
+
+
+if __name__ == "__main__":                 # only true when you run: python3 fetch.py
+    new_items = fetch_and_store()
+    print("Total new items:", len(new_items))
