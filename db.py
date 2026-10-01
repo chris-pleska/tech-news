@@ -44,6 +44,23 @@ def save_item(conn, item):
     )
     return cursor.rowcount == 1     # True if a new row was added, False if it was a duplicate
 
+
+def get_latest_items(limit=50, category=None):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row     # lets us read columns by name, like row["title"]
+
+    query = "SELECT source, category, title, summary, link, published_at FROM items"
+    params = []
+    if category:                       # only filter when a category was asked for
+        query += " WHERE category = ?"
+        params.append(category)
+    query += " ORDER BY COALESCE(published_at, grabbed_at) DESC LIMIT ?"     # newest first; fall back to grab time if no date
+    params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]     # plain dicts are easier to use in templates
+
 if __name__ == "__main__":     # only runs when you do: python3 db.py
     create_table()
     print("Table ready.")
