@@ -1,5 +1,7 @@
 import sqlite3
 
+from datetime import datetime, timezone     # NEW: to timestamp when an item was posted
+
 DB_PATH = "news.db"     # the database file; it's created automatically the first time
 
 
@@ -60,6 +62,24 @@ def get_latest_items(limit=50, category=None):
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(row) for row in rows]     # plain dicts are easier to use in templates
+
+def get_unposted_items(conn):
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT id, source, title, link FROM items
+        WHERE posted_at IS NULL
+        ORDER BY COALESCE(published_at, grabbed_at) ASC
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]     # oldest first, so the channel reads in time order
+
+
+def mark_posted(conn, item_id):
+    conn.execute(
+        "UPDATE items SET posted_at = ? WHERE id = ?",
+        (datetime.now(timezone.utc).isoformat(), item_id),
+    )
 
 if __name__ == "__main__":     # only runs when you do: python3 db.py
     create_table()
