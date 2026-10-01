@@ -1,0 +1,60 @@
+# Tech News
+
+A small news pipeline that collects the latest gaming and PC hardware news,
+shows it on a website, and posts new stories to a Telegram channel.
+
+## How it works
+The script reads the RSS feeds of GameSpot and Tom's Hardware and saves the latest
+news to a database. The website shows the saved news, and new stories are posted
+to the Telegram channel.
+
+## Setup
+```bash
+git clone git@github.com:chris-pleska/tech-news.git
+cd tech-news
+python3 -m venv .venv               # create the virtual environment
+source .venv/bin/activate           # activate it (macOS / Linux)
+pip install -r requirements.txt     # install the project's packages
+```
+
+## Running it
+- `python3 fetch.py` - gets the news from the feeds and saves new stories
+- `python3 telegram_bot.py` - posts new stories to the Telegram channel
+- `python3 web.py` - starts the website at http://127.0.0.1:5000
+
+## Configuration
+Posting to Telegram needs two environment variables:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"     # from @BotFather
+export TELEGRAM_CHAT_ID="@yourchannel"         # your channel's @name
+```
+
+The bot token is a secret: never put it in the code or commit it to GitHub.
+
+## Tests
+Run the tests with `pytest`, or `pytest -v` to see each test name with PASSED or FAILED.
+`pytest.ini` sets the Python path so the tests can import `db`, `fetch` and `telegram_bot`.
+
+The tests don't touch the internet, your database or Telegram. They use a small fake
+RSS feed with 2 stories, a temporary database, and a fake Telegram send.
+
+The three things they check:
+- **No duplicates** (`test_no_duplicates`): running the fetch twice on the same feed
+  saves 2 items the first time and 0 the second.
+- **Missing summary** (`test_missing_summary`): an article with no description is saved
+  with an empty summary instead of crashing, and a normal summary is kept.
+- **Failed posts are retried** (`test_failed_post_is_retried`): when Telegram is down,
+  nothing is marked as posted. When it works again, both items get sent, and a third run
+  sends nothing, so nothing is ever posted twice.
+
+## Adding a feed
+The feed list is `FEEDS` at the top of `fetch.py`. Each feed is one line with a display
+name, a category and the RSS URL:
+
+```python
+{"name": "GameSpot", "category": "games", "url": "https://www.gamespot.com/feeds/game-news/"},
+```
+
+To add a feed, add a new line like this to the list. On the next `python3 fetch.py`,
+its articles are saved, and its category appears in the website's filter bar automatically.
