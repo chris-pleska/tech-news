@@ -8,19 +8,19 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
-# Security group: only lets Postgres traffic in from inside the VPC
+# Security group: only lets Postgres traffic in from the Lambda
 resource "aws_security_group" "db" {
   name        = "tech-news-db-sg"
-  description = "Postgres access from inside the VPC"
+  description = "Postgres access from inside the VPC" # left as is: changing it would replace the group
   vpc_id      = aws_vpc.main.id
 
-  #   ingress {
-  #     description = "Postgres from the VPC"
-  #     from_port   = 5432
-  #     to_port     = 5432
-  #     protocol    = "tcp"
-  #     cidr_blocks = [aws_vpc.main.cidr_block] # 10.1.0.0/16, nothing from the internet
-  #   }
+  ingress {
+    description     = "Postgres from the Lambda only"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lambda.id] # anything wearing the Lambda's security group
+  }
 
   tags = {
     Name = "tech-news-db-sg"
