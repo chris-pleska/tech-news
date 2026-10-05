@@ -1,6 +1,10 @@
+import os
 import db
 import fetch
 import telegram_bot
+
+# A separate database just for tests, because each test empties the table first.
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://localhost/tech_news_test")
 
 # A tiny hand-written RSS feed, so tests never need the internet.
 # The second item has no <description>, on purpose.
@@ -31,16 +35,19 @@ def fake_get(url, **kwargs):              # pretends to be requests.get()
     return FakeResponse()
 
 
-def use_fakes(tmp_path, monkeypatch):
-    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "test.db"))       # temporary database, not your real news.db
-    monkeypatch.setattr(fetch.requests, "get", fake_get)               # no real downloads
-    monkeypatch.setattr(fetch, "FEEDS", [                              # one fake feed instead of your real list
+def use_fakes(monkeypatch):
+    monkeypatch.setattr(db, "DATABASE_URL", TEST_DATABASE_URL)     #the test database, never your real one
+    db.create_table()                                               # NEW: make sure the table exists
+    with db.get_connection() as conn:
+        conn.execute("TRUNCATE items")                              # NEW: start every test with an empty table
+    monkeypatch.setattr(fetch.requests, "get", fake_get)
+    monkeypatch.setattr(fetch, "FEEDS", [
         {"name": "Fake", "category": "games", "url": "https://example.com/feed"},
     ])
 
 
-def test_no_duplicates(tmp_path, monkeypatch):
-    use_fakes(tmp_path, monkeypatch)
+def test_no_duplicates(monkeypatch):
+    use_fakes(monkeypatch)
 
     first = fetch.fetch_and_store()       # first run: both stories are new
     second = fetch.fetch_and_store()      # second run: same feed, nothing new
@@ -48,8 +55,8 @@ def test_no_duplicates(tmp_path, monkeypatch):
     assert len(first) == 2
     assert len(second) == 0
 
-def test_missing_summary(tmp_path, monkeypatch):
-    use_fakes(tmp_path, monkeypatch)
+def test_missing_summary(monkeypatch):
+    use_fakes(monkeypatch)
 
     fetch.fetch_and_store()                                        # save the fake feed
 
@@ -58,8 +65,8 @@ def test_missing_summary(tmp_path, monkeypatch):
     assert saved["First story"]["summary"] == "Hello"              # a normal summary is kept
     assert saved["Second story"]["summary"] is None                # a missing one is saved as empty, no crash
 
-def test_failed_post_is_retried(tmp_path, monkeypatch):
-    use_fakes(tmp_path, monkeypatch)
+def test_failed_post_is_retried(monkeypatch):
+    use_fakes(monkeypatch)
     monkeypatch.setattr(telegram_bot.time, "sleep", lambda seconds: None)   # skip the 3-second pauses in tests
     fetch.fetch_and_store()                                                 # 2 unposted items in the database
 
