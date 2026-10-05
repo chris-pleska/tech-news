@@ -1,38 +1,41 @@
-import sqlite3
+import os
 
-from datetime import datetime, timezone     # NEW: to timestamp when an item was posted
+import psycopg
+from psycopg.rows import dict_row
 
-DB_PATH = "news.db"     # the database file; it's created automatically the first time
+# Where the database lives. On your Mac this default points at your local Postgres.
+# On AWS, DATABASE_URL will be set to the RDS address instead.
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost/tech_news")
 
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)     # opens the database file (creates it if missing)
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)   # rows come back as dictionaries
 
 
 def create_table():
-    conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS items (
-            id           INTEGER PRIMARY KEY,
-            source       TEXT NOT NULL,
-            category     TEXT NOT NULL,
-            title        TEXT NOT NULL,
-            summary      TEXT,
-            link         TEXT NOT NULL UNIQUE,
-            published_at TEXT,
-            grabbed_at   TEXT NOT NULL,
-            posted_at    TEXT
-        )
-    """)
-    conn.commit()     # save the change to the file
-    conn.close()      # close the database when done
+    with get_connection() as conn:                # "with" commits and closes automatically
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS items (
+                id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                source       TEXT NOT NULL,
+                category     TEXT NOT NULL,
+                title        TEXT NOT NULL,
+                summary      TEXT,
+                link         TEXT NOT NULL UNIQUE,
+                published_at TIMESTAMPTZ,
+                grabbed_at   TIMESTAMPTZ NOT NULL,
+                posted_at    TIMESTAMPTZ
+            )
+        """)
+
 
 def save_item(conn, item):
     cursor = conn.execute(
         """
-        INSERT OR IGNORE INTO items
+        INSERT INTO items
             (source, category, title, summary, link, published_at, grabbed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (link) DO NOTHING
         """,
         (
             item["source"],
@@ -44,44 +47,36 @@ def save_item(conn, item):
             item["grabbed_at"],
         ),
     )
-    return cursor.rowcount == 1     # True if a new row was added, False if it was a duplicate
+    return cursor.rowcount == 1     # 1 = new row added, 0 = duplicate link, skipped
 
 
 def get_latest_items(limit=50, category=None):
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row     # lets us read columns by name, like row["title"]
-
     query = "SELECT source, category, title, summary, link, published_at FROM items"
     params = []
-    if category:                       # only filter when a category was asked for
-        query += " WHERE category = ?"
+    if category:
+        query += " WHERE category = %s"
         params.append(category)
-    query += " ORDER BY COALESCE(published_at, grabbed_at) DESC LIMIT ?"     # newest first; fall back to grab time if no date
+    query += " ORDER BY COALESCE(published_at, grabbed_at) DESC LIMIT %s"
     params.append(limit)
 
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    return [dict(row) for row in rows]     # plain dicts are easier to use in templates
+    with get_connection() as conn:
+        return conn.execute(query, params).fetchall()
+
 
 def get_unposted_items(conn):
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
+    return conn.execute(
         """
         SELECT id, source, title, link FROM items
         WHERE posted_at IS NULL
         ORDER BY COALESCE(published_at, grabbed_at) ASC
         """
     ).fetchall()
-    return [dict(row) for row in rows]     # oldest first, so the channel reads in time order
 
 
 def mark_posted(conn, item_id):
-    conn.execute(
-        "UPDATE items SET posted_at = ? WHERE id = ?",
-        (datetime.now(timezone.utc).isoformat(), item_id),
-    )
+    conn.execute("UPDATE items SET posted_at = NOW() WHERE id = %s", (item_id,))
 
-if __name__ == "__main__":     # only runs when you do: python3 db.py
+
+if __name__ == "__main__":
     create_table()
     print("Table ready.")
-

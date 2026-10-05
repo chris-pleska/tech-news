@@ -59,4 +59,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")    # CHANGED: debug only if FLASK_DEBUG=1
+    app.run(port=int(os.environ.get("PORT", 5001)), debug=os.environ.get("FLASK_DEBUG") == "1") # CHANGED: debug only if         FLASK_DEBUG=1
